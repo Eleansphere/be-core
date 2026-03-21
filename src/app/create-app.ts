@@ -1,0 +1,86 @@
+import express, { Express } from 'express';
+import cors, { CorsOptions } from 'cors';
+import bodyParser from 'body-parser';
+import { createSequelize } from '../db/create-sequelize';
+import { createAuthRouter } from '../auth/create-auth-router';
+import { ProjectPlugin } from '../types/plugin-types';
+import { ModelConfig } from '../types/model-config';
+import { initModelsFromConfigs, mountModelRoutes } from '../utils/init-models-from-configs';
+
+export interface AppConfig {
+  databaseUrl: string;
+  schema?: string;
+  jwtSecret: string;
+  port?: number;
+  modelConfigs?: ModelConfig[];
+  plugins?: ProjectPlugin[];
+  cors?: CorsOptions;
+  auth?: {
+    modelName: string; // name of the user model (e.g. 'user')
+    expiresIn?: string;
+  };
+}
+
+export function createApp(config: AppConfig): Express {
+  const sequelize = createSequelize({
+    databaseUrl: config.databaseUrl,
+    schema: config.schema,
+  });
+
+  // 1. Init models from configs (generic)
+  const configModels = config.modelConfigs
+    ? initModelsFromConfigs(config.modelConfigs, sequelize)
+    : {};
+
+  // 2. Register models from plugins (custom)
+  for (const plugin of config.plugins ?? []) {
+    plugin.registerModels?.(sequelize);
+  }
+
+  // All models are now registered in sequelize.models
+  const allModels = { ...configModels, ...sequelize.models } as Record<string, any>;
+
+  // 3. Sync DB
+  sequelize
+    .sync()
+    .then(() => console.log('Database synchronized'))
+    .catch((err: Error) => console.error('Error synchronizing database:', err));
+
+  const app = express();
+
+  app.use(cors(config.cors));
+  app.use(express.json());
+  app.use(bodyParser.json());
+
+  // 4. Mount auto-generated CRUD routes from modelConfigs
+  if (config.modelConfigs) {
+    mountModelRoutes(config.modelConfigs, configModels, app);
+  }
+
+  // 5. Mount auth routes
+  if (config.auth) {
+    const userModel = sequelize.models[config.auth.modelName];
+    if (!userModel) {
+      throw new Error(
+        `Auth model '${config.auth.modelName}' not found. Make sure it is registered via modelConfigs or a plugin.`
+      );
+    }
+    const authRouter = createAuthRouter(userModel, {
+      jwtSecret: config.jwtSecret,
+      expiresIn: config.auth.expiresIn,
+    });
+    app.use('/api/auth', authRouter);
+  }
+
+  app.get('/', (_req, res) => res.send('Backend is running!'));
+
+  // 6. Register custom routes from plugins
+  for (const plugin of config.plugins ?? []) {
+    plugin.registerRoutes(app, sequelize, allModels);
+  }
+
+  const port = config.port ?? 3000;
+  app.listen(port, () => console.log(`Server running on port ${port}`));
+
+  return app;
+}

@@ -1,0 +1,24 @@
+export type FieldType = 'STRING' | 'TEXT' | 'INTEGER' | 'FLOAT' | 'BOOLEAN' | 'DATE' | 'BLOB';
+
+export interface FieldValidation {
+  required?: boolean;
+  unique?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  min?: number;
+  max?: number;
+  format?: 'email' | 'url';
+}
+
+export interface FieldConfig extends FieldValidation {
+  type: FieldType;
+  default?: any;
+}
+
+export interface ModelConfig {
+  name: string;
+  prefix: string;
+  fields: Record<string, FieldConfig>;
+  routePath?: string; // defaults to /api/${name}s
+  log?: boolean;
+}
